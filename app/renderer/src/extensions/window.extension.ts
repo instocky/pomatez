@@ -9,6 +9,15 @@ declare global {
         url: string,
         options?: Electron.OpenExternalOptions
       ) => Promise<void>;
+      // Добавляем поддержку invoke для наших IPC вызовов
+      ipcRenderer: {
+        invoke: (channel: string, ...args: any[]) => Promise<any>;
+        on: (
+          channel: string,
+          listener: (...args: any[]) => void
+        ) => void;
+        removeAllListeners: (channel: string) => void;
+      };
     };
     __TAURI__: {};
   }

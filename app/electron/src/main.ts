@@ -23,6 +23,32 @@ import {
   TRAY_ICON_UPDATE,
   SET_COMPACT_MODE,
   SET_OPEN_AT_LOGIN,
+  // Pomodoro API channels
+  POMODORO_CREATE_SESSION,
+  POMODORO_START_TRACKING,
+  POMODORO_PAUSE_TRACKING,
+  POMODORO_STOP_TRACKING,
+  POMODORO_GET_SESSION,
+  POMODORO_LIST_SESSIONS,
+  POMODORO_GET_STATS,
+  POMODORO_GET_SETTINGS,
+  POMODORO_UPDATE_SETTINGS,
+  ACTIVITY_GET_CURRENT,
+  // Type imports
+  CreateSessionRequest,
+  CreateSessionResponse,
+  TrackingRequest,
+  TrackingResponse,
+  GetSessionRequest,
+  GetSessionResponse,
+  ListSessionsRequest,
+  ListSessionsResponse,
+  GetStatsRequest,
+  GetStatsResponse,
+  GetSettingsResponse,
+  UpdateSettingsRequest,
+  UpdateSettingsResponse,
+  GetCurrentActivityResponse,
 } from "@pomatez/shareables";
 import {
   activateGlobalShortcuts,
@@ -36,6 +62,8 @@ import {
 } from "./helpers";
 import isDev from "electron-is-dev";
 import store from "./store";
+import { storageManager } from "./api/storage-manager";
+import { activityTracker } from "./api/activity-tracker";
 
 import "v8-compile-cache";
 import {
@@ -452,6 +480,227 @@ ipcMain.on(SET_OPEN_AT_LOGIN, (e, { openAtLogin }) => {
   }
 });
 
+// === POMODORO API HANDLERS ===
+
+// Create new pomodoro session
+ipcMain.handle(
+  POMODORO_CREATE_SESSION,
+  async (
+    event,
+    request: CreateSessionRequest
+  ): Promise<CreateSessionResponse> => {
+    try {
+      console.log("[Main] Creating pomodoro session:", request);
+
+      // Generate unique ID
+      const sessionId = `pomodoro_${Date.now()}_${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+
+      // Create session object
+      const session = {
+        id: sessionId,
+        path: request.path,
+        title: request.title,
+        status: "created" as const,
+        sessionType: request.sessionType,
+        targetMinutes: request.targetMinutes,
+        totalMinutes: 0,
+        activeMinutes: 0,
+        description: request.description || "",
+        fillColor: "#4CAF50",
+        dailyMasks: {},
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Save to storage
+      const success = await storageManager.savePomodoro(session);
+
+      if (success) {
+        // Notify renderer about new session
+        win?.webContents.send("POMODORO_SESSION_CREATED", { session });
+
+        return {
+          success: true,
+          session,
+        };
+      } else {
+        throw new Error("Failed to save session to storage");
+      }
+    } catch (error) {
+      console.error("[Main] Failed to create session:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+// Start tracking for session
+ipcMain.handle(
+  POMODORO_START_TRACKING,
+  async (
+    event,
+    request: TrackingRequest
+  ): Promise<TrackingResponse> => {
+    try {
+      console.log(
+        "[Main] Starting tracking for session:",
+        request.sessionId
+      );
+
+      // Load session
+      const session = await storageManager.loadPomodoro(
+        request.sessionId
+      );
+      if (!session) {
+        throw new Error(`Session ${request.sessionId} not found`);
+      }
+
+      // Update session status
+      session.status = "running";
+      session.updatedAt = new Date().toISOString();
+
+      const success = await storageManager.savePomodoro(session);
+
+      if (success) {
+        // Start activity tracker
+        await activityTracker.startTracking(session);
+
+        // Notify renderer
+        win?.webContents.send("POMODORO_TRACKING_STARTED", {
+          sessionId: request.sessionId,
+        });
+
+        return {
+          success: true,
+          sessionId: request.sessionId,
+        };
+      } else {
+        throw new Error("Failed to update session status");
+      }
+    } catch (error) {
+      console.error("[Main] Failed to start tracking:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+// Pause tracking for session
+ipcMain.handle(
+  POMODORO_PAUSE_TRACKING,
+  async (
+    event,
+    request: TrackingRequest
+  ): Promise<TrackingResponse> => {
+    try {
+      console.log(
+        "[Main] Pausing tracking for session:",
+        request.sessionId
+      );
+
+      // Load session
+      const session = await storageManager.loadPomodoro(
+        request.sessionId
+      );
+      if (!session) {
+        throw new Error(`Session ${request.sessionId} not found`);
+      }
+
+      // Update session status
+      session.status = "paused";
+      session.updatedAt = new Date().toISOString();
+
+      const success = await storageManager.savePomodoro(session);
+
+      if (success) {
+        // Pause activity tracker
+        await activityTracker.pauseTracking();
+
+        // Notify renderer
+        win?.webContents.send("POMODORO_TRACKING_PAUSED", {
+          sessionId: request.sessionId,
+        });
+
+        return {
+          success: true,
+          sessionId: request.sessionId,
+        };
+      } else {
+        throw new Error("Failed to update session status");
+      }
+    } catch (error) {
+      console.error("[Main] Failed to pause tracking:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+// Stop tracking and complete session
+ipcMain.handle(
+  POMODORO_STOP_TRACKING,
+  async (
+    event,
+    request: TrackingRequest
+  ): Promise<TrackingResponse> => {
+    try {
+      console.log(
+        "[Main] Stopping tracking for session:",
+        request.sessionId
+      );
+
+      // Load session
+      const session = await storageManager.loadPomodoro(
+        request.sessionId
+      );
+      if (!session) {
+        throw new Error(`Session ${request.sessionId} not found`);
+      }
+
+      // Update session status
+      session.status = "completed";
+      session.completedAt = new Date().toISOString();
+      session.updatedAt = new Date().toISOString();
+
+      const success = await storageManager.savePomodoro(session);
+
+      if (success) {
+        // Stop activity tracker
+        await activityTracker.stopTracking();
+
+        // Notify renderer
+        win?.webContents.send("POMODORO_TRACKING_STOPPED", {
+          sessionId: request.sessionId,
+        });
+        win?.webContents.send("POMODORO_SESSION_COMPLETED", {
+          session,
+        });
+
+        return {
+          success: true,
+          sessionId: request.sessionId,
+        };
+      } else {
+        throw new Error("Failed to update session status");
+      }
+    } catch (error) {
+      console.error("[Main] Failed to stop tracking:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
@@ -469,3 +718,240 @@ app.on("will-quit", () => {
 });
 
 app.setAppUserModelId("com.roldanjr.pomatez");
+
+// Get session by ID
+ipcMain.handle(
+  POMODORO_GET_SESSION,
+  async (
+    event,
+    request: GetSessionRequest
+  ): Promise<GetSessionResponse> => {
+    try {
+      console.log("[Main] Getting session:", request.sessionId);
+
+      const session = await storageManager.loadPomodoro(
+        request.sessionId
+      );
+
+      if (session) {
+        return {
+          success: true,
+          session,
+        };
+      } else {
+        return {
+          success: false,
+          error: `Session ${request.sessionId} not found`,
+        };
+      }
+    } catch (error) {
+      console.error("[Main] Failed to get session:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+// List sessions with filters
+ipcMain.handle(
+  POMODORO_LIST_SESSIONS,
+  async (
+    event,
+    request: ListSessionsRequest
+  ): Promise<ListSessionsResponse> => {
+    try {
+      console.log("[Main] Listing sessions with filters:", request);
+
+      const sessions = await storageManager.listPomodoros(request);
+
+      return {
+        success: true,
+        sessions,
+      };
+    } catch (error) {
+      console.error("[Main] Failed to list sessions:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+// Get session statistics
+ipcMain.handle(
+  POMODORO_GET_STATS,
+  async (
+    event,
+    request: GetStatsRequest
+  ): Promise<GetStatsResponse> => {
+    try {
+      console.log("[Main] Getting stats:", request);
+
+      if (request.sessionId) {
+        // Get stats for specific session
+        const stats = await storageManager.getSessionStats(
+          request.sessionId
+        );
+        return {
+          success: true,
+          stats,
+        };
+      } else if (request.dateRange) {
+        // Get daily stats for date range
+        const dailyStats: Record<string, any> = {};
+
+        const startDate = new Date(request.dateRange.start);
+        const endDate = new Date(request.dateRange.end);
+
+        for (
+          let date = new Date(startDate);
+          date <= endDate;
+          date.setDate(date.getDate() + 1)
+        ) {
+          const dateStr = date.toISOString().split("T")[0];
+          dailyStats[dateStr] = await storageManager.getDayStats(
+            dateStr
+          );
+        }
+
+        return {
+          success: true,
+          dailyStats,
+        };
+      } else {
+        // Get today's stats
+        const today = new Date().toISOString().split("T")[0];
+        const dailyStats = {
+          [today]: await storageManager.getDayStats(today),
+        };
+
+        return {
+          success: true,
+          dailyStats,
+        };
+      }
+    } catch (error) {
+      console.error("[Main] Failed to get stats:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+// Get Pomodoro settings
+ipcMain.handle(
+  POMODORO_GET_SETTINGS,
+  async (event): Promise<GetSettingsResponse> => {
+    try {
+      console.log("[Main] Getting Pomodoro settings");
+
+      const settings = storageManager.getPomodoroSettings();
+
+      return {
+        success: true,
+        settings,
+      };
+    } catch (error) {
+      console.error("[Main] Failed to get settings:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+// Update Pomodoro settings
+ipcMain.handle(
+  POMODORO_UPDATE_SETTINGS,
+  async (
+    event,
+    request: UpdateSettingsRequest
+  ): Promise<UpdateSettingsResponse> => {
+    try {
+      console.log(
+        "[Main] Updating Pomodoro settings:",
+        request.settings
+      );
+
+      storageManager.savePomodoroSettings(request.settings);
+      const updatedSettings = storageManager.getPomodoroSettings();
+
+      return {
+        success: true,
+        settings: updatedSettings,
+      };
+    } catch (error) {
+      console.error("[Main] Failed to update settings:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+// Get current activity status (placeholder for now)
+ipcMain.handle(
+  ACTIVITY_GET_CURRENT,
+  async (event): Promise<GetCurrentActivityResponse> => {
+    try {
+      console.log("[Main] Getting current activity status");
+
+      // TODO: Implement actual activity monitoring
+      // For now, return mock data
+      const activity = {
+        isActive: true,
+        lastInputTime: Date.now(),
+        idleTimeSeconds: 0,
+        mouseActivity: true,
+        keyboardActivity: false,
+      };
+
+      return {
+        success: true,
+        activity,
+      };
+    } catch (error) {
+      console.error("[Main] Failed to get current activity:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+);
+
+console.log("[Main] Pomodoro IPC handlers registered");
+
+// Setup activity tracker event listeners
+activityTracker.on("interval_recorded", (data) => {
+  // Send activity stats update to renderer
+  win?.webContents.send("ACTIVITY_STATS_UPDATED", {
+    stats: data.stats,
+    sessionId: data.sessionId,
+  });
+});
+
+activityTracker.on("tracking_started", (session) => {
+  console.log(
+    `[Main] Activity tracking started for session: ${session.id}`
+  );
+});
+
+activityTracker.on("tracking_stopped", (session) => {
+  console.log(
+    `[Main] Activity tracking stopped for session: ${session.id}`
+  );
+});
+
+activityTracker.on("tracking_paused", (session) => {
+  console.log(
+    `[Main] Activity tracking paused for session: ${session.id}`
+  );
+});

@@ -7,6 +7,8 @@ import settingReducer from "./settings";
 import timerReducer from "./timer";
 import undoableTasksReducer from "./tasks";
 import updateReducer from "./update";
+import pomodoroReducer from "./pomodoro";
+import { pomodoroTimerMiddleware } from "./pomodoro/middleware";
 
 export type AppStateTypes = ReturnType<typeof store.getState>;
 export type AppDispatchTypes = typeof store.dispatch;
@@ -18,7 +20,10 @@ const store = configureStore({
     timer: timerReducer,
     tasks: undoableTasksReducer,
     update: updateReducer,
+    pomodoro: pomodoroReducer,
   },
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware().concat(pomodoroTimerMiddleware),
 });
 
 if (!getFromStorage("state")) {
