@@ -49,6 +49,11 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.0.0-alpha.17",
+    "@types/conventional-commits-parser": "^5.0.1",
+    "@types/glob": "^8.1.0",
+    "@types/minimatch": "^5.1.2",
+    "@types/plist": "^3.0.5",
+    "@types/verror": "^1.10.11",
     "commitizen": "^4.1.2",
     "copyfiles": "2.4.1",
     "cross-env": "^7.0.3",
